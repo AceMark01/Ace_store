@@ -1,29 +1,63 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
-import { Check, X, Truck, PackageCheck, AlertCircle, Calendar, FileText } from 'lucide-react';
+import { Check, X, Truck, PackageCheck, AlertCircle, Calendar, FileText, Package } from 'lucide-react';
 import SkeletonLoader from '../components/SkeletonLoader';
 
 const CustomerOrder = () => {
     const { user } = useAuth();
-    const [activeTab, setActiveTab] = useState('pending'); // pending, approved, dispatched, delivered
+    const [searchParams, setSearchParams] = useSearchParams();
+    const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'pending');
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [highlightedOrder, setHighlightedOrder] = useState(searchParams.get('highlight') || null);
+    const highlightRef = useRef(null);
 
     // Modal State
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [modalAction, setModalAction] = useState(null); // 'dispatch', 'deliver'
     const [formData, setFormData] = useState({ vehicleNo: '', expectedDate: '', proof: '', receivedBy: '' });
 
+    // Read URL params on mount & changes
+    useEffect(() => {
+        const tab = searchParams.get('tab');
+        const highlight = searchParams.get('highlight');
+        if (tab) setActiveTab(tab);
+        if (highlight) {
+            setHighlightedOrder(highlight);
+            // Clear highlight after 4s
+            const timer = setTimeout(() => setHighlightedOrder(null), 4000);
+            // Clean up search params
+            setSearchParams({}, { replace: true });
+            return () => clearTimeout(timer);
+        }
+    }, [searchParams, setSearchParams]);
+
+    // Scroll highlighted order into view
+    useEffect(() => {
+        if (highlightedOrder && highlightRef.current && !loading) {
+            highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [highlightedOrder, loading]);
+
     const refreshData = useCallback(async () => {
         const { data, error } = await supabase
             .from('orders')
-            .select('*, users!customer_id(first_name)')
+            .select(`
+                *,
+                users!customer_id(first_name),
+                products!product_id(name, image_url, price, category)
+            `)
             .order('created_at', { ascending: false });
+        
         if (data && !error) {
             const enrichedOrders = data.map(o => ({
                 ...o,
-                customer_name: o.users?.first_name || 'Unknown User'
+                customer_name: o.users?.first_name || 'Unknown User',
+                product_name: o.products?.name || 'Product Not Found',
+                product_image: o.products?.image_url || 'https://placehold.co/400?text=Product',
+                product_category: o.products?.category || 'General'
             }));
             setOrders(enrichedOrders);
         }
@@ -54,7 +88,6 @@ const CustomerOrder = () => {
     };
 
     const handleApprove = (id) => updateStatus(id, 'APPROVED');
-    // For reject, we could store 'Admin Rejected' somewhere if we had a rejection_reason column. Without it, just statuses.
     const handleReject = (id) => updateStatus(id, 'REJECTED');
 
     const openDispatchModal = (order) => {
@@ -102,6 +135,18 @@ const CustomerOrder = () => {
         }
     }, [orders, activeTab]);
 
+    const getStatusStyles = (status) => {
+        switch (status) {
+            case 'PENDING': return 'bg-amber-50 text-amber-600 border-amber-200';
+            case 'APPROVED': return 'bg-cyan-50 text-cyan-600 border-cyan-200';
+            case 'DISPATCHED': return 'bg-blue-50 text-blue-600 border-blue-200';
+            case 'DELIVERED': return 'bg-emerald-50 text-emerald-600 border-emerald-200';
+            case 'REJECTED': return 'bg-rose-50 text-rose-600 border-rose-200';
+            case 'CANCELLED': return 'bg-slate-100 text-slate-500 border-slate-200';
+            default: return 'bg-slate-50 text-slate-600 border-slate-200';
+        }
+    };
+
     return (
         <div className="space-y-6 animate-fade-in-up">
 
@@ -129,51 +174,111 @@ const CustomerOrder = () => {
 
             {/* Content */}
             <div className="min-h-[400px]">
-                <div className="space-y-4">
+                <div className="space-y-5">
                     {loading ? (
                         <SkeletonLoader type="list" count={5} />
                     ) : (
                         <>
-                            {filteredOrders.length === 0 && <p className="text-slate-500">No orders in this status.</p>}
-                            {filteredOrders.map(order => (
-                                <div key={order.order_id} className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm md:flex items-center justify-between group hover:border-red-200 transition-colors">
-                                    <div className="mb-4 md:mb-0">
-                                        <div className="flex items-center gap-3 mb-2">
-                                            <span className="font-bold text-slate-900">{order.order_id}</span>
-                                            <span className="text-xs text-slate-500">{new Date(order.created_at).toLocaleDateString()}</span>
+                            {filteredOrders.length === 0 && (
+                                <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-slate-200">
+                                    <PackageCheck className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+                                    <p className="text-slate-500 font-medium tracking-tight">No orders in this status.</p>
+                                </div>
+                            )}
+                            {filteredOrders.map(order => {
+                                const isHighlighted = highlightedOrder === order.order_id;
+                                return (
+                                <div
+                                    key={order.order_id}
+                                    ref={isHighlighted ? highlightRef : null}
+                                    className={`bg-white rounded-2xl border shadow-sm overflow-hidden group transition-all duration-500 hover:shadow-xl hover:shadow-slate-200/50 ${
+                                        isHighlighted
+                                            ? 'border-red-400 ring-2 ring-red-300 ring-offset-2 bg-red-50/20 shadow-lg shadow-red-200/50 scale-[1.01]'
+                                            : 'border-slate-200'
+                                    }`}
+                                >
+                                    <div className="p-5 md:flex gap-6 items-start">
+                                        {/* Left: Product Image */}
+                                        <div className="relative shrink-0 mb-4 md:mb-0">
+                                            <div className="w-24 h-24 md:w-32 md:h-32 rounded-xl overflow-hidden border border-slate-100 bg-slate-50 shadow-inner group-hover:shadow-md transition-all duration-300">
+                                                <img 
+                                                    src={order.product_image} 
+                                                    alt={order.product_name} 
+                                                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-125"
+                                                    onError={(e) => { e.target.src = 'https://placehold.co/400?text=Product' }}
+                                                />
+                                            </div>
+                                            <div className="absolute -top-2 -left-2 bg-slate-900 text-white text-[10px] font-black px-2 py-0.5 rounded shadow-lg shadow-black/20 z-10">
+                                                {order.product_category}
+                                            </div>
                                         </div>
-                                        <p className="text-sm text-slate-700">
-                                            Product ID: <span className="font-medium">{order.product_id}</span> × {order.quantity}
-                                        </p>
-                                        <p className="text-sm text-slate-700">
-                                            Amount: <span className="font-bold">₹{order.amount}</span> ({order.payment_type})
-                                        </p>
-                                        <p className="text-xs text-slate-500 mt-1">Customer: <span className="font-semibold text-slate-700">{order.customer_name || order.customer_id}</span></p>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {activeTab === 'pending' && (
-                                            <>
-                                                <button onClick={() => handleApprove(order.order_id)} className="flex items-center gap-1 px-3 py-2 bg-green-50 text-green-600 rounded-lg text-sm font-medium border border-green-200 hover:bg-green-100">
-                                                    <Check size={16} /> Approve
+
+                                        {/* Center: Details */}
+                                        <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div className="space-y-2">
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${getStatusStyles(order.status)} animate-fade-in`}>
+                                                        {order.status}
+                                                    </span>
+                                                    <span className="text-xs text-slate-400 font-mono tracking-tighter bg-slate-50 px-2 py-0.5 rounded">
+                                                        #{order.order_id}
+                                                    </span>
+                                                </div>
+                                                <h3 className="text-lg font-black text-slate-800 leading-tight group-hover:text-red-600 transition-colors line-clamp-2">
+                                                    {order.product_name}
+                                                </h3>
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-medium">
+                                                    <p className="text-slate-500">PID: <span className="text-slate-900 font-bold">{order.product_id}</span></p>
+                                                    <p className="text-slate-500">Qty: <span className="text-slate-900 font-bold">{order.quantity}</span></p>
+                                                    <p className="text-slate-500">Payment: <span className="text-slate-900 font-bold">{order.payment_type}</span></p>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <div className="flex items-center gap-1.5 text-slate-400">
+                                                    <Calendar size={13} />
+                                                    <span className="text-xs font-semibold">{new Date(order.created_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                                                </div>
+                                                <div className="bg-slate-50/50 p-2.5 rounded-xl border border-slate-100 flex items-center justify-between">
+                                                    <div>
+                                                        <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest mb-0.5">Price</p>
+                                                        <p className="text-xl font-black text-slate-900">₹{order.amount?.toLocaleString()}</p>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <p className="text-[10px] uppercase font-black text-slate-400 tracking-widest mb-0.5">Customer</p>
+                                                        <p className="text-xs font-bold text-slate-700">{order.customer_name}</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Right: Actions */}
+                                        <div className="mt-4 md:mt-0 md:pl-6 md:border-l border-slate-100 flex flex-row md:flex-col gap-2 shrink-0 self-center">
+                                            {activeTab === 'pending' && (
+                                                <>
+                                                    <button onClick={() => handleApprove(order.order_id)} className="flex items-center justify-center gap-2 px-4 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-green-200/50 hover:bg-green-700 hover:-translate-y-0.5 transition-all">
+                                                        <Check size={16} /> Approve
+                                                    </button>
+                                                    <button onClick={() => handleReject(order.order_id)} className="flex items-center justify-center gap-2 px-4 py-2.5 bg-slate-100 text-slate-600 rounded-xl text-sm font-bold hover:bg-rose-50 hover:text-rose-600 transition-all">
+                                                        <X size={16} /> Reject
+                                                    </button>
+                                                </>
+                                            )}
+                                            {activeTab === 'approved' && (
+                                                <button onClick={() => openDispatchModal(order)} className="flex items-center justify-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-blue-200/50 hover:bg-blue-700 hover:-translate-y-0.5 transition-all">
+                                                    <Truck size={18} /> Dispatch
                                                 </button>
-                                                <button onClick={() => handleReject(order.order_id)} className="flex items-center gap-1 px-3 py-2 bg-red-50 text-red-600 rounded-lg text-sm font-medium border border-red-200 hover:bg-red-100">
-                                                    <X size={16} /> Reject
+                                            )}
+                                            {activeTab === 'dispatched' && (
+                                                <button onClick={() => openDeliverModal(order)} className="flex items-center justify-center gap-2 px-6 py-3 bg-purple-600 text-white rounded-xl text-sm font-bold shadow-lg shadow-purple-200/50 hover:bg-purple-700 hover:-translate-y-0.5 transition-all">
+                                                    <PackageCheck size={18} /> Mark Delivered
                                                 </button>
-                                            </>
-                                        )}
-                                        {activeTab === 'approved' && (
-                                            <button onClick={() => openDispatchModal(order)} className="flex items-center gap-1 px-3 py-2 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium border border-blue-200 hover:bg-blue-100">
-                                                <Truck size={16} /> Dispatch
-                                            </button>
-                                        )}
-                                        {activeTab === 'dispatched' && (
-                                            <button onClick={() => openDeliverModal(order)} className="flex items-center gap-1 px-3 py-2 bg-purple-50 text-purple-600 rounded-lg text-sm font-medium border border-purple-200 hover:bg-purple-100">
-                                                <PackageCheck size={16} /> Mark Delivered
-                                            </button>
-                                        )}
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
-                            ))}
+                                );
+                            })}
                         </>
                     )}
                 </div>

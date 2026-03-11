@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { Clock, CheckCircle, Truck, Package, XCircle, ChevronDown, ChevronUp, PackageCheck } from 'lucide-react';
@@ -6,9 +7,31 @@ import SkeletonLoader from '../components/SkeletonLoader';
 
 const MyOrders = () => {
     const { user } = useAuth();
+    const [searchParams, setSearchParams] = useSearchParams();
     const [orders, setOrders] = useState([]);
     const [expandedOrder, setExpandedOrder] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [highlightedOrder, setHighlightedOrder] = useState(searchParams.get('highlight') || null);
+    const highlightRef = useRef(null);
+
+    // Read URL params on mount & changes
+    useEffect(() => {
+        const highlight = searchParams.get('highlight');
+        if (highlight) {
+            setHighlightedOrder(highlight);
+            setExpandedOrder(highlight); // Auto-expand the highlighted order
+            const timer = setTimeout(() => setHighlightedOrder(null), 4000);
+            setSearchParams({}, { replace: true });
+            return () => clearTimeout(timer);
+        }
+    }, [searchParams, setSearchParams]);
+
+    // Scroll highlighted order into view
+    useEffect(() => {
+        if (highlightedOrder && highlightRef.current && !loading) {
+            highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }, [highlightedOrder, loading]);
 
     const loadOrders = useCallback(async () => {
         if (!user) return;
@@ -82,8 +105,18 @@ const MyOrders = () => {
                 </div>
             ) : (
                 <div className="space-y-4">
-                    {orders.map(order => (
-                        <div key={order.order_id} className="bg-white border border-slate-200 rounded-xl overflow-hidden hover:shadow-md transition-all">
+                    {orders.map(order => {
+                        const isHighlighted = highlightedOrder === order.order_id;
+                        return (
+                        <div
+                            key={order.order_id}
+                            ref={isHighlighted ? highlightRef : null}
+                            className={`bg-white border rounded-xl overflow-hidden transition-all duration-500 ${
+                                isHighlighted
+                                    ? 'border-red-400 ring-2 ring-red-300 ring-offset-1 shadow-lg shadow-red-100'
+                                    : 'border-slate-200 hover:shadow-md'
+                            }`}
+                        >
                             <div
                                 className="p-4 flex flex-col md:flex-row md:items-center justify-between cursor-pointer gap-4 bg-slate-50/30"
                                 onClick={() => toggleExpand(order.order_id)}
@@ -178,7 +211,8 @@ const MyOrders = () => {
                                 </div>
                             )}
                         </div>
-                    ))}
+                        );
+                    })}
                 </div>
             )}
         </div>

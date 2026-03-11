@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Sidebar from './Sidebar';
-import { Menu, Bell } from 'lucide-react';
+import NotificationPanel from './NotificationPanel';
+import { Menu } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -44,11 +45,8 @@ const Layout = ({ children }) => {
                     </div>
 
                     <div className="flex items-center gap-3 md:gap-6">
-
-                        <button className="relative p-2.5 rounded-full hover:bg-white text-slate-400 hover:text-red-600 transition-all hover:shadow-lg hover:shadow-red-500/10">
-                            <Bell size={22} />
-                            <span className="absolute top-2 right-2.5 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white"></span>
-                        </button>
+                        {/* Notification Bell + Panel */}
+                        <NotificationPanel />
 
                         <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
                             <div className="text-right hidden md:block">

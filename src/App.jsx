@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
+import { NotificationProvider } from './context/NotificationContext';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -34,6 +35,7 @@ function App() {
   return (
     <Router>
       <AuthProvider>
+        <NotificationProvider>
         <CartProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
@@ -52,6 +54,7 @@ function App() {
             <Route path="/admin/customers" element={<ProtectedRoute><CustomerDetails /></ProtectedRoute>} />
           </Routes>
         </CartProvider>
+        </NotificationProvider>
       </AuthProvider>
     </Router>
   );
