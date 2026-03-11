@@ -1,30 +1,43 @@
-import React, { useState, useEffect } from 'react';
-import { LS, updateOrderStatus } from '../utils/LSHelpers';
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { Clock, CheckCircle, Truck, Package, XCircle, ChevronDown, ChevronUp, PackageCheck } from 'lucide-react';
+import SkeletonLoader from '../components/SkeletonLoader';
 
 const MyOrders = () => {
     const { user } = useAuth();
     const [orders, setOrders] = useState([]);
     const [expandedOrder, setExpandedOrder] = useState(null);
+    const [loading, setLoading] = useState(true);
 
-    const loadOrders = () => {
+    const loadOrders = useCallback(async () => {
         if (!user) return;
-        const all = LS.get('ri_orders');
-        const myOrders = user.role === 'admin' ? all : all.filter(o => o.customer_id === user.id);
-        setOrders(myOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-    };
+        let query = supabase.from('orders').select('*, users!customer_id (first_name, email)').order('created_at', { ascending: false });
+        if (user.role !== 'admin') {
+            query = query.eq('customer_id', user.id);
+        }
+        const { data, error } = await query;
+        if (data && !error) {
+            const enriched = data.map(o => ({
+                ...o,
+                customer_name: o.users?.first_name || o.users?.email || o.customer_id
+            }));
+            setOrders(enriched);
+        }
+        setLoading(false);
+    }, [user]);
 
     useEffect(() => {
         loadOrders();
         window.addEventListener('ri_data_changed', loadOrders);
         return () => window.removeEventListener('ri_data_changed', loadOrders);
-    }, [user]);
+    }, [loadOrders]);
 
-    const handleCancel = (e, orderId) => {
+    const handleCancel = async (e, orderId) => {
         e.stopPropagation();
         if (window.confirm('Are you sure you want to cancel this order?')) {
-            updateOrderStatus(orderId, 'CANCELLED', { by: user.id });
+            await supabase.from('orders').update({ status: 'CANCELLED' }).eq('order_id', orderId);
+            loadOrders();
         }
     };
 
@@ -58,9 +71,10 @@ const MyOrders = () => {
 
     return (
         <div className="space-y-6 animate-fade-in-up">
-            <h1 className="text-2xl font-bold text-slate-800">{user?.role === 'admin' ? 'All Orders' : 'My Orders'}</h1>
 
-            {orders.length === 0 ? (
+            {loading ? (
+                <SkeletonLoader type="list" count={5} />
+            ) : orders.length === 0 ? (
                 <div className="text-center py-16 bg-white rounded-xl border border-dashed border-slate-300">
                     <PackageCheck className="w-12 h-12 text-slate-300 mx-auto mb-3" />
                     <p className="text-slate-500 font-medium">No orders yet</p>
@@ -86,7 +100,7 @@ const MyOrders = () => {
                                             </span>
                                         </div>
                                         <p className="text-sm text-slate-500">
-                                            Placed on {new Date(order.createdAt).toLocaleDateString()}
+                                            Placed on {new Date(order.created_at).toLocaleDateString()}
                                         </p>
                                         <p className="text-xs text-slate-400 mt-1">
                                             Product ID: {order.product_id} • Qty: {order.quantity}
@@ -110,24 +124,34 @@ const MyOrders = () => {
                                         <div>
                                             <div className="flex items-center gap-2 mb-4">
                                                 <Clock size={16} className="text-red-500" />
-                                                <h4 className="font-semibold text-slate-800 text-sm">Order Timeline</h4>
+                                                <h4 className="font-semibold text-slate-800 text-sm">Order Status</h4>
                                             </div>
                                             <div className="relative pl-3 border-l-2 border-slate-100 ml-2 space-y-6">
-                                                {order.history.map((h, i) => (
-                                                    <div key={i} className="relative pl-6">
+                                                {/* Placed event */}
+                                                <div className="relative pl-6">
+                                                    <div className="absolute -left-[9px] top-0 bg-white p-1 rounded-full border border-slate-200 shadow-sm z-10">
+                                                        <Clock size={16} className="text-amber-500" />
+                                                    </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-sm font-bold text-slate-700">Order Placed</span>
+                                                        <span className="text-xs text-slate-500">{new Date(order.created_at).toLocaleString()}</span>
+                                                    </div>
+                                                </div>
+                                                {/* Current Status if changed */}
+                                                {order.status !== 'PENDING' && (
+                                                    <div className="relative pl-6">
                                                         <div className="absolute -left-[9px] top-0 bg-white p-1 rounded-full border border-slate-200 shadow-sm z-10">
-                                                            {getStatusIcon(h.status)}
+                                                            {getStatusIcon(order.status)}
                                                         </div>
                                                         <div className="flex flex-col">
-                                                            <span className="text-sm font-bold text-slate-700">{h.status}</span>
-                                                            <span className="text-xs text-slate-500">{new Date(h.at).toLocaleString()}</span>
-                                                            {h.vehicleNo && <span className="text-xs text-slate-600 mt-1 bg-slate-100 px-2 py-1 rounded w-fit">Vehicle: {h.vehicleNo}</span>}
-                                                            {h.proof && <span className="text-xs text-blue-600 mt-1 underline cursor-pointer">View Proof</span>}
-                                                            {h.reason && <span className="text-xs text-red-500 mt-1 italic">Reason: {h.reason}</span>}
-                                                            {h.by && user.role === 'admin' && <span className="text-[10px] text-slate-400">By: {h.by}</span>}
+                                                            <span className="text-sm font-bold text-slate-700">{order.status}</span>
+                                                            <span className="text-xs text-slate-500">Latest Update</span>
+                                                            {order.dispatch_info?.vehicleNo && <span className="text-xs text-slate-600 mt-1 bg-slate-100 px-2 py-1 rounded w-fit">Vehicle: {order.dispatch_info.vehicleNo}</span>}
+                                                            {order.delivery_info?.proof && <span className="text-xs text-blue-600 mt-1 underline cursor-pointer">View Proof</span>}
+                                                            {order.delivery_info?.reason && <span className="text-xs text-red-500 mt-1 italic">Reason: {order.delivery_info.reason}</span>}
                                                         </div>
                                                     </div>
-                                                ))}
+                                                )}
                                             </div>
                                         </div>
 
@@ -136,9 +160,9 @@ const MyOrders = () => {
                                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
                                                 <h4 className="font-semibold text-slate-800 text-sm mb-2">Delivery Details</h4>
                                                 <p className="text-sm text-slate-600 mb-1"><span className="font-medium">Address:</span> {order.address}</p>
-                                                <p className="text-sm text-slate-600 mb-1"><span className="font-medium">Payment:</span> {order.paymentType}</p>
+                                                <p className="text-sm text-slate-600 mb-1"><span className="font-medium">Payment:</span> {order.payment_type}</p>
                                                 {order.scheme_id && <p className="text-sm text-green-600"><span className="font-medium">Scheme:</span> {order.scheme_id}</p>}
-                                                <p className="text-sm text-slate-600 mt-2"><span className="font-medium">Customer:</span> {order.customer_id}</p>
+                                                <p className="text-sm text-slate-600 mt-2"><span className="font-medium">Customer:</span> {order.customer_name || order.customer_id}</p>
                                             </div>
 
                                             {order.status === 'PENDING' && (

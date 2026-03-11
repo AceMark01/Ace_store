@@ -1,262 +1,362 @@
 import React, { useState, useEffect } from 'react';
-import { LS, createOrder } from '../utils/LSHelpers';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
+import { useCart } from '../context/CartContext';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Search, ShoppingBag, CreditCard, ChevronRight, Plus, Trash2, ShoppingCart, Tag } from 'lucide-react';
+import { Search, ShoppingBag, CreditCard, Trash2, ShoppingCart, Heart, Package, MapPin, ChevronRight } from 'lucide-react';
+import AddToCartModal from '../components/AddToCartModal';
+import SkeletonLoader from '../components/SkeletonLoader';
 
 const PlaceOrder = () => {
     const { user } = useAuth();
+    const { cart, removeFromCart, updateQty, clearCart } = useCart();
     const location = useLocation();
     const navigate = useNavigate();
 
-    // Data
     const [products, setProducts] = useState([]);
-    const [schemes, setSchemes] = useState([]);
     const [searchTerm, setSearchTerm] = useState('');
-
-    // Cart
-    const [cart, setCart] = useState([]);
-
-    // Selection Form
-    const [selectedProductId, setSelectedProductId] = useState('');
-    const [qty, setQty] = useState(1);
-    const [selectedSchemeId, setSelectedSchemeId] = useState('');
-
-    // Checkout Form
-    const [address, setAddress] = useState('123, Industrial Area, Main Road, Pune');
+    const [favoriteIds, setFavoriteIds] = useState(new Set());
+    const [activeTab, setActiveTab] = useState('favorites');
+    const [cartModalProduct, setCartModalProduct] = useState(null);
+    const [address, setAddress] = useState('');
     const [paymentType, setPaymentType] = useState('COD');
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        setProducts(LS.get('ri_products'));
-        setSchemes(LS.get('ri_schemes'));
-        if (location.state?.preselectedProductId) {
-            setSelectedProductId(location.state.preselectedProductId);
-        }
+        if (location.state?.openCartTab) setActiveTab('cart');
     }, [location.state]);
 
-    // Select product handler
-    const handleSelectProduct = (id) => {
-        setSelectedProductId(id);
-        setQty(1);
-        setSelectedSchemeId('');
-    };
+    useEffect(() => {
+        const loadData = async () => {
+            if (user?.id) {
+                // Fetch favorites first, then only fetch those products (Bug #7 fix)
+                const { data: favData } = await supabase
+                    .from('favorites').select('product_id').eq('user_id', user.id);
 
-    const addToCart = () => {
-        if (!selectedProductId) return;
-        const product = products.find(p => p.product_id === selectedProductId);
+                if (favData && favData.length > 0) {
+                    const favIds = favData.map(f => f.product_id);
+                    setFavoriteIds(new Set(favIds));
+                    const { data: pData } = await supabase
+                        .from('products')
+                        .select('*')
+                        .in('product_id', favIds);
+                    if (pData) setProducts(pData);
+                } else {
+                    setFavoriteIds(new Set());
+                    setProducts([]);
+                }
 
-        // Calculate item total
-        const scheme = schemes.find(s => s.scheme_id === selectedSchemeId);
-        const gross = product.price * qty;
-        const discount = scheme ? (gross * scheme.discountPercent / 100) : 0;
-        const final = gross - discount;
+                const { data: addressData } = await supabase
+                    .from('user_addresses').select('*')
+                    .eq('user_id', user.id).eq('is_default', true).maybeSingle();
 
-        const item = {
-            id: Date.now(), // temp id for cart
-            product,
-            qty: Number(qty),
-            scheme,
-            finalAmount: final
+                if (addressData) {
+                    setAddress(`${addressData.address_line1 || ''}, ${addressData.city || ''}, ${addressData.state || ''} - ${addressData.postal_code || ''}`.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*,/g, ','));
+                } else if (user?.deliveryAddress) {
+                    const a = user.deliveryAddress;
+                    setAddress(`${a.address || ''}, ${a.city || ''}, ${a.district || ''}, ${a.state || ''} - ${a.postalCode || ''}`.replace(/^[,\s]+|[,\s]+$/g, '').replace(/,\s*,/g, ','));
+                }
+            }
+            setLoading(false);
         };
+        loadData();
+    }, [user]);
 
-        setCart([...cart, item]);
-        // Reset selection
-        setSelectedProductId('');
-        setQty(1);
-        setSelectedSchemeId('');
-    };
-
-    const removeFromCart = (itemId) => {
-        setCart(cart.filter(item => item.id !== itemId));
-    };
-
-    const handleCheckout = (e) => {
+    const handleCheckout = async (e) => {
         e.preventDefault();
         if (cart.length === 0) return;
-
-        // Create an order for each item in cart
-        cart.forEach(item => {
-            const order = {
-                order_id: 'O' + Date.now() + Math.floor(Math.random() * 100),
-                customer_id: user.id,
-                product_id: item.product.product_id,
-                quantity: item.qty,
-                amount: item.finalAmount,
-                address,
-                paymentType,
-                scheme_id: item.scheme?.scheme_id || null,
-                status: 'PENDING',
-                createdAt: new Date().toISOString(),
-                history: [{ status: 'PENDING', at: new Date().toISOString(), by: user.id }]
-            };
-            createOrder(order);
-        });
-
-        alert(`Successfully placed ${cart.length} orders!`);
+        setIsSubmitting(true);
+        const orderDocs = cart.map((item, index) => ({  // Bug #13: include index to prevent ID collision
+            order_id: 'O' + Date.now().toString().slice(-6) + index.toString().padStart(2, '0') + Math.floor(Math.random() * 100),
+            customer_id: user.id,
+            product_id: item.product.product_id,
+            quantity: item.qty,
+            amount: item.finalAmount,
+            address,
+            payment_type: paymentType,
+            scheme_id: item.scheme?.scheme_id || null,
+            status: 'PENDING',
+            created_at: new Date().toISOString()
+        }));
+        const { error } = await supabase.from('orders').insert(orderDocs);
+        setIsSubmitting(false);
+        if (error) { alert('Failed to place order. Try again.'); return; }
+        clearCart();
+        alert(`Successfully placed ${cart.length} order(s)!`);
         navigate('/orders');
     };
 
-    const selectedProduct = products.find(p => p.product_id === selectedProductId);
-
-    // Filter Schemes for selected product
-    const availableSchemes = schemes.filter(s => {
-        const now = new Date().toISOString();
-        if (s.validTo < now || s.validFrom > now) return false;
-        if (s.product_ids && selectedProductId && !s.product_ids.includes(selectedProductId)) return false;
-        return true;
-    });
-
-    // Calculations for Selection
-    const currentPrice = selectedProduct ? selectedProduct.price : 0;
-    const currentGross = currentPrice * qty;
-    const currentScheme = availableSchemes.find(s => s.scheme_id === selectedSchemeId);
-    const currentDiscount = currentScheme ? (currentGross * currentScheme.discountPercent / 100) : 0;
-    const currentFinal = Math.max(0, currentGross - currentDiscount);
-
-    // Cart Total
     const cartTotal = cart.reduce((sum, item) => sum + item.finalAmount, 0);
 
-    const filteredProducts = products.filter(p =>
+    const toggleFavorite = async (e, productId) => {
+        e.stopPropagation();
+        // Optimistically remove from UI
+        setFavoriteIds(prev => {
+            const next = new Set(prev);
+            next.delete(productId);
+            return next;
+        });
+        // Remove from Supabase
+        const { error } = await supabase
+            .from('favorites')
+            .delete()
+            .eq('user_id', user.id)
+            .eq('product_id', productId);
+        if (error) {
+            console.error('Error removing favorite:', error);
+            // Revert on failure
+            setFavoriteIds(prev => new Set([...prev, productId]));
+        }
+    };
+
+    const favoriteProducts = products.filter(p => favoriteIds.has(p.product_id));
+    const filteredFavorites = favoriteProducts.filter(p =>
         p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.product_id.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     return (
-        <div className="flex flex-col lg:flex-row gap-6 min-h-[calc(100vh-8rem)] animate-fade-in-up">
-            {/* Left: Product Selection */}
-            <div className="flex-1 glass-panel flex flex-col overflow-hidden max-h-[800px]">
-                <div className="p-4 border-b border-slate-100 space-y-4">
-                    <h2 className="text-lg font-bold text-slate-800">1. Select Products</h2>
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input
-                            type="text"
-                            placeholder="Search by name or ID..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full glass-input pl-10"
-                        />
-                    </div>
-                </div>
+        <div className="flex flex-col gap-0 min-h-[calc(100vh-8rem)] animate-fade-in-up">
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
-                    {filteredProducts.map(product => (
-                        <div
-                            key={product.product_id}
-                            onClick={() => handleSelectProduct(product.product_id)}
-                            className={`flex items-center gap-4 p-3 border rounded-xl cursor-pointer transition-all ${selectedProductId === product.product_id
-                                ? 'bg-red-50 border-red-500 shadow-md ring-1 ring-red-500'
-                                : 'bg-white border-slate-100 hover:shadow-md hover:border-slate-300'
-                                }`}
-                        >
-                            <img src={product.image} alt={product.name} className="w-12 h-12 rounded-lg object-cover bg-slate-200" onError={(e) => { e.target.src = 'https://placehold.co/100' }} />
-                            <div className="flex-1">
-                                <h4 className="font-semibold text-slate-800 text-sm">{product.name}</h4>
-                                <p className="text-xs text-slate-500">{product.product_id}</p>
-                            </div>
-                            <span className="font-bold text-slate-900">₹{product.price}</span>
-                        </div>
-                    ))}
-                </div>
+            {/* Tabs */}
+            <div className="flex border-b border-slate-200 bg-white sticky top-0 z-10">
+                <button
+                    className={`px-6 py-3.5 font-semibold text-sm transition-all focus:outline-none flex items-center gap-2 border-b-2 ${activeTab === 'favorites' ? 'text-rose-600 border-rose-500' : 'text-slate-400 border-transparent hover:text-slate-700 hover:border-slate-200'}`}
+                    onClick={() => setActiveTab('favorites')}
+                >
+                    <Heart size={16} className={activeTab === 'favorites' ? 'fill-rose-500 text-rose-500' : ''} />
+                    My Favorites
+                    {favoriteProducts.length > 0 && (
+                        <span className="text-xs font-bold bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{favoriteProducts.length}</span>
+                    )}
+                </button>
+                <button
+                    className={`px-6 py-3.5 font-semibold text-sm transition-all focus:outline-none flex items-center gap-2 border-b-2 ${activeTab === 'cart' ? 'text-rose-600 border-rose-500' : 'text-slate-400 border-transparent hover:text-slate-700 hover:border-slate-200'}`}
+                    onClick={() => setActiveTab('cart')}
+                >
+                    <ShoppingCart size={16} />
+                    Cart
+                    {cart.length > 0 && (
+                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full ${activeTab === 'cart' ? 'bg-rose-100 text-rose-600' : 'bg-slate-100 text-slate-500'}`}>{cart.length}</span>
+                    )}
+                </button>
             </div>
 
-            {/* Right: Cart & Checkout */}
-            <div className="w-full lg:w-[500px] flex flex-col gap-4">
+            {/* ── FAVORITES TAB ── */}
+            {activeTab === 'favorites' && (
+                <div className="pt-6 space-y-4">
+                    {/* Search */}
+                    <div className="relative max-w-sm">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                        <input
+                            type="text"
+                            placeholder="Search favorites..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="glass-input pl-9 py-2 text-sm w-full"
+                        />
+                    </div>
 
-                {/* Add Item Panel */}
-                <div className="glass-panel p-6">
-                    <h2 className="text-lg font-bold text-slate-800 mb-4">Add to Cart</h2>
-                    {!selectedProduct ? (
-                        <div className="text-center text-slate-400 py-4">
-                            <p>Select a product to add it to your order</p>
+                    {loading ? (
+                        <div className="mt-8">
+                            <SkeletonLoader type="card" count={4} />
+                        </div>
+                    ) : filteredFavorites.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center py-24 text-slate-400">
+                            <Heart size={48} className="text-slate-200 mb-3" />
+                            <p className="font-semibold text-slate-500">No favorites yet</p>
+                            <p className="text-sm mt-1">Browse the catalog and heart products you love</p>
+                            <button onClick={() => navigate('/all-products')} className="mt-4 text-sm font-semibold text-rose-500 hover:text-rose-600 flex items-center gap-1">
+                                Browse Catalog <ChevronRight size={14} />
+                            </button>
                         </div>
                     ) : (
-                        <div className="space-y-4">
-                            <div className="flex gap-3 items-center">
-                                <img src={selectedProduct.image} className="w-12 h-12 rounded object-cover" onError={(e) => { e.target.src = 'https://placehold.co/100' }} />
-                                <div>
-                                    <h4 className="font-bold text-slate-800">{selectedProduct.name}</h4>
-                                    <p className="text-xs text-slate-500">₹{selectedProduct.price} / unit</p>
-                                </div>
-                            </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+                            {filteredFavorites.map(product => (
+                                <div
+                                    key={product.product_id}
+                                    className="glass-card group overflow-hidden flex flex-col cursor-pointer transition-all hover:shadow-lg hover:shadow-red-500/20 hover:-translate-y-1"
+                                    onClick={() => setCartModalProduct(product)}
+                                >
+                                    <div className="relative h-52 bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden shrink-0">
+                                        <img
+                                            src={product.image_url || product.image || 'https://placehold.co/400?text=Product'}
+                                            alt={product.name}
+                                            className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                                            onError={e => { e.target.src = 'https://placehold.co/400?text=Product'; }}
+                                        />
+                                        {product.category && (
+                                            <div className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-md text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded shadow-sm z-10 pointer-events-none">
+                                                {product.category}
+                                            </div>
+                                        )}
+                                        {/* Clickable heart — removes from favorites */}
+                                        <button
+                                            onClick={(e) => toggleFavorite(e, product.product_id)}
+                                            className="absolute top-3 right-3 p-2 bg-white/70 hover:bg-white/90 backdrop-blur-sm rounded-full shadow-sm z-20 transition-all hover:scale-110"
+                                            title="Remove from favorites"
+                                        >
+                                            <Heart size={16} className="fill-red-500 text-red-500" />
+                                        </button>
+                                    </div>
 
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500">Qty</label>
-                                    <input type="number" min="1" value={qty} onChange={e => setQty(e.target.value)} className="glass-input w-full" />
+                                    <div className="p-4 flex-1 flex flex-col">
+                                        <h3 className="text-base font-bold text-slate-800 leading-tight line-clamp-1 mb-1">{product.name}</h3>
+                                        <p className="text-sm text-slate-500 line-clamp-2 leading-relaxed flex-1">
+                                            {product.description || 'No additional details available.'}
+                                        </p>
+                                        <div className="mt-4 flex items-end justify-between">
+                                            <div>
+                                                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Price</p>
+                                                <span className="text-xl font-black text-slate-900 tracking-tight">₹{product.price?.toLocaleString()}</span>
+                                            </div>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setCartModalProduct(product); }}
+                                                className="px-4 py-2 bg-indigo-100 text-indigo-700 font-bold text-[13px] rounded-lg hover:bg-indigo-200 shadow-sm transition-all hover:-translate-y-0.5"
+                                            >
+                                                Add to cart
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div>
-                                    <label className="text-xs font-bold text-slate-500">Scheme</label>
-                                    <select value={selectedSchemeId} onChange={e => setSelectedSchemeId(e.target.value)} className="glass-input w-full text-sm">
-                                        <option value="">None</option>
-                                        {availableSchemes.map(s => <option key={s.scheme_id} value={s.scheme_id}>{s.name} ({s.discountPercent}%)</option>)}
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div className="flex items-center justify-between pt-2 border-t border-dashed border-slate-200">
-                                <span className="text-sm font-bold text-slate-700">Total: ₹{currentFinal.toLocaleString()}</span>
-                                <button onClick={addToCart} className="bg-slate-900 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-slate-800 flex items-center gap-2">
-                                    <Plus size={16} /> Add
-                                </button>
-                            </div>
+                            ))}
                         </div>
                     )}
                 </div>
+            )}
 
-                {/* Cart Summary & Checkout */}
-                <div className="glass-panel p-6 flex-1 flex flex-col">
-                    <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-                        <ShoppingCart size={20} /> Your Cart ({cart.length})
-                    </h2>
+            {/* ── CART TAB ── */}
+            {activeTab === 'cart' && (
+                <div className="pt-6 flex flex-col lg:flex-row gap-8 items-start">
 
-                    <div className="flex-1 overflow-y-auto mb-4 space-y-3 custom-scrollbar min-h-[150px]">
+                    {/* Left: Cart Items */}
+                    <div className="flex-1 min-w-0">
+                        <h2 className="text-base font-bold text-slate-700 mb-4 flex items-center gap-2">
+                            <ShoppingCart size={18} className="text-slate-400" />
+                            Cart Items
+                            <span className="text-xs font-semibold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{cart.length}</span>
+                        </h2>
+
                         {cart.length === 0 ? (
-                            <div className="text-center py-10 text-slate-400 border border-dashed border-slate-200 rounded-xl">
-                                <ShoppingBag size={32} className="mx-auto mb-2 opacity-50" />
-                                <p>Cart is empty</p>
+                            <div className="flex flex-col items-center justify-center py-20 text-center">
+                                <ShoppingBag size={48} className="text-slate-200 mb-4" />
+                                <p className="font-semibold text-slate-500">Your cart is empty</p>
+                                <p className="text-sm text-slate-400 mt-1">Add some products from your favorites</p>
+                                <button onClick={() => setActiveTab('favorites')} className="mt-4 text-sm font-semibold text-rose-500 hover:text-rose-600 flex items-center gap-1">
+                                    My Favorites <ChevronRight size={14} />
+                                </button>
                             </div>
                         ) : (
-                            cart.map(item => (
-                                <div key={item.id} className="flex justify-between items-center p-3 bg-slate-50 rounded-lg border border-slate-100">
-                                    <div className="flex items-center gap-3">
-                                        <img src={item.product.image} className="w-10 h-10 rounded object-cover" onError={(e) => { e.target.src = 'https://placehold.co/100' }} />
-                                        <div>
-                                            <h4 className="font-bold text-slate-800 text-sm">{item.product.name}</h4>
-                                            <p className="text-xs text-slate-500">Qty: {item.qty} • ₹{item.finalAmount}</p>
+                            <div className="divide-y divide-slate-100">
+                                {cart.map(item => (
+                                    <div key={item.id} className="flex items-center gap-4 py-4 group">
+                                        <img
+                                            src={item.product.image_url || item.product.image || 'https://placehold.co/100'}
+                                            alt={item.product.name}
+                                            className="w-16 h-16 rounded-xl object-cover bg-slate-100 border border-slate-100 flex-shrink-0"
+                                            onError={e => { e.target.src = 'https://placehold.co/100'; }}
+                                        />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="font-semibold text-slate-800 text-sm truncate">{item.product.name}</p>
+                                            {item.scheme && (
+                                                <p className="text-xs text-emerald-500 font-medium mt-0.5">{item.scheme.name} applied</p>
+                                            )}
+                                            <p className="text-xs text-slate-400 mt-0.5">₹{item.product.price} / unit</p>
+                                        </div>
+                                        {/* Qty input — same style as modal */}
+                                        <div className="flex-shrink-0">
+                                            <input
+                                                type="number"
+                                                min="1"
+                                                value={item.qty}
+                                                onChange={e => updateQty(item.id, e.target.value)}
+                                                className="glass-input w-20 text-base font-medium text-center"
+                                            />
+                                        </div>
+                                        <div className="text-right flex-shrink-0 min-w-[70px]">
+                                            <p className="font-bold text-slate-900">₹{item.finalAmount.toLocaleString()}</p>
+                                            <button
+                                                onClick={() => removeFromCart(item.id)}
+                                                className="mt-1 text-slate-300 hover:text-red-500 transition-colors"
+                                            >
+                                                <Trash2 size={15} />
+                                            </button>
                                         </div>
                                     </div>
-                                    <button onClick={() => removeFromCart(item.id)} className="text-red-400 hover:text-red-600 p-2">
-                                        <Trash2 size={16} />
-                                    </button>
-                                </div>
-                            ))
+                                ))}
+                            </div>
                         )}
                     </div>
 
+                    {/* Right: Order Summary */}
                     {cart.length > 0 && (
-                        <div className="space-y-4 pt-4 border-t border-slate-200">
-                            <div>
-                                <label className="text-xs font-bold text-slate-500 block mb-1">Delivery Address</label>
-                                <textarea value={address} onChange={e => setAddress(e.target.value)} className="glass-input w-full h-16 resize-none text-sm"></textarea>
-                            </div>
+                        <div className="w-full lg:w-80 xl:w-96 flex-shrink-0 bg-white border border-slate-100 rounded-2xl shadow-sm p-6 space-y-5">
+                            <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Order Summary</h3>
 
-                            <div className="flex gap-2">
-                                {['COD', 'PREPAID'].map(type => (
-                                    <label key={type} className={`flex-1 cursor-pointer border rounded-lg p-2 text-center text-xs font-bold transition-all ${paymentType === type ? 'bg-red-50 border-red-500 text-red-700' : 'bg-white border-slate-200'}`}>
-                                        <input type="radio" value={type} checked={paymentType === type} onChange={() => setPaymentType(type)} className="hidden" />
-                                        {type}
-                                    </label>
+                            {/* Price breakdown */}
+                            <div className="space-y-2 text-sm">
+                                {cart.map(item => (
+                                    <div key={item.id} className="flex justify-between text-slate-500">
+                                        <span className="truncate max-w-[160px]">{item.product.name} × {item.qty}</span>
+                                        <span className="font-medium text-slate-700">₹{item.finalAmount.toLocaleString()}</span>
+                                    </div>
                                 ))}
+                                <div className="border-t border-slate-100 pt-2 mt-2 flex justify-between font-bold text-slate-900">
+                                    <span>Total</span>
+                                    <span>₹{cartTotal.toLocaleString()}</span>
+                                </div>
                             </div>
 
-                            <button onClick={handleCheckout} className="w-full py-3 bg-gradient-to-r from-red-600 to-rose-600 text-white font-bold rounded-xl shadow-lg hover:shadow-red-500/50 transition-all flex items-center justify-center gap-2">
-                                Pay ₹{cartTotal.toLocaleString()} & Order
+                            {/* Delivery Address */}
+                            <div>
+                                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-2">
+                                    <MapPin size={12} /> Delivery Address
+                                </label>
+                                <textarea
+                                    value={address}
+                                    onChange={e => setAddress(e.target.value)}
+                                    rows={3}
+                                    className="w-full text-sm text-slate-700 border border-slate-200 rounded-xl px-3 py-2.5 resize-none focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-rose-300 bg-slate-50"
+                                />
+                            </div>
+
+                            {/* Payment Type */}
+                            <div>
+                                <label className="text-xs font-semibold text-slate-500 uppercase tracking-wider block mb-2">Payment</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {['COD', 'PREPAID'].map(type => (
+                                        <button
+                                            key={type}
+                                            onClick={() => setPaymentType(type)}
+                                            className={`flex items-center justify-center gap-2 py-2.5 rounded-xl text-xs font-bold border transition-all ${paymentType === type ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}
+                                        >
+                                            {type === 'COD' ? <Package size={14} /> : <CreditCard size={14} />}
+                                            {type}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* CTA */}
+                            <button
+                                disabled={isSubmitting}
+                                onClick={handleCheckout}
+                                className={`w-full py-3 rounded-xl text-sm font-bold text-white bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-600 hover:to-rose-700 shadow-md shadow-rose-500/20 transition-all flex items-center justify-center gap-2 ${isSubmitting ? 'opacity-60 cursor-not-allowed grayscale' : ''}`}
+                            >
+                                {isSubmitting ? 'Placing Order...' : `Place Order · ₹${cartTotal.toLocaleString()}`}
                             </button>
                         </div>
                     )}
                 </div>
-            </div>
+            )}
+
+            {/* Add to Cart Modal */}
+            <AddToCartModal
+                product={cartModalProduct}
+                onClose={() => setCartModalProduct(null)}
+                onAdded={() => { setActiveTab('cart'); }}
+            />
         </div>
     );
 };

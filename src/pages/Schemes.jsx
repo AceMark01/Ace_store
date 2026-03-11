@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { LS } from '../utils/LSHelpers';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { Tag, Calendar, Gift, Plus, X, Check, History, Trash2 } from 'lucide-react';
+import SkeletonLoader from '../components/SkeletonLoader';
 
 const Schemes = () => {
     const { user } = useAuth();
@@ -10,6 +11,7 @@ const Schemes = () => {
     const [showHistory, setShowHistory] = useState(false);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isProductDropdownOpen, setIsProductDropdownOpen] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     // Form State
     const [formData, setFormData] = useState({
@@ -21,9 +23,13 @@ const Schemes = () => {
 
     const [selectedProductIds, setSelectedProductIds] = useState([]);
 
-    const refreshData = () => {
-        setSchemes(LS.get('ri_schemes'));
-        setProducts(LS.get('ri_products'));
+    const refreshData = async () => {
+        const { data: sData } = await supabase.from('schemes').select('*');
+        if (sData) setSchemes(sData);
+
+        const { data: pData } = await supabase.from('products').select('*');
+        if (pData) setProducts(pData);
+        setLoading(false);
     };
 
     useEffect(() => {
@@ -36,37 +42,36 @@ const Schemes = () => {
         );
     };
 
-    const handleDeactivate = (id) => {
+    const handleDeactivate = async (id) => {
         if (!window.confirm("Are you sure you want to deactivate this scheme? It will move to history.")) return;
 
-        const current = LS.get('ri_schemes');
-        const idx = current.findIndex(s => s.scheme_id === id);
-        if (idx > -1) {
-            // Set validTo to yesterday to expire it
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
-            current[idx].validTo = yesterday.toISOString().split('T')[0];
-            LS.set('ri_schemes', current);
-            refreshData();
-        }
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const newValidTo = yesterday.toISOString().split('T')[0];
+
+        await supabase.from('schemes').update({ valid_to: newValidTo }).eq('scheme_id', id);
+        refreshData();
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         if (!formData.name || !formData.discountPercent || !formData.validTo) return;
 
         const newScheme = {
             scheme_id: 'S' + Date.now().toString().slice(-4),
             name: formData.name,
-            discountPercent: Number(formData.discountPercent),
-            validFrom: formData.validFrom,
-            validTo: formData.validTo,
-            product_ids: selectedProductIds
+            discount_percent: Number(formData.discountPercent),
+            valid_from: formData.validFrom,
+            valid_to: formData.validTo,
+            applicable_products: selectedProductIds
         };
 
-        const current = LS.get('ri_schemes');
-        current.unshift(newScheme);
-        LS.set('ri_schemes', current);
+        const { error } = await supabase.from('schemes').insert([newScheme]);
+        if (error) {
+            console.error("Error creating scheme:", error);
+            alert("Error creating scheme");
+            return;
+        }
 
         refreshData();
         setIsModalOpen(false);
@@ -76,8 +81,8 @@ const Schemes = () => {
 
     // Filter Logic
     const today = new Date().toISOString().split('T')[0];
-    const activeSchemes = schemes.filter(s => s.validTo >= today);
-    const expiredSchemes = schemes.filter(s => s.validTo < today);
+    const activeSchemes = schemes.filter(s => s.valid_to >= today);
+    const expiredSchemes = schemes.filter(s => s.valid_to < today);
 
     const displayedSchemes = showHistory ? expiredSchemes : activeSchemes;
 
@@ -112,7 +117,9 @@ const Schemes = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {displayedSchemes.length === 0 ? (
+                {loading ? (
+                    <SkeletonLoader type="card" count={3} />
+                ) : displayedSchemes.length === 0 ? (
                     <div className="col-span-full text-center py-10">
                         <div className="mx-auto w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mb-4">
                             <Tag size={32} className="text-slate-300" />
@@ -146,9 +153,9 @@ const Schemes = () => {
                                         )}
                                     </div>
                                     <h3 className={`text-2xl font-bold mb-2 ${showHistory ? 'text-slate-800' : ''}`}>{scheme.name}</h3>
-                                    <p className={`text-sm mb-4 ${showHistory ? 'text-slate-500' : 'text-white/90'}`}>Get {scheme.discountPercent}% Off on selected products!</p>
+                                    <p className={`text-sm mb-4 ${showHistory ? 'text-slate-500' : 'text-white/90'}`}>Get {scheme.discount_percent}% Off on selected products!</p>
                                     <div className="flex flex-wrap gap-1 mb-4 max-h-20 overflow-y-auto custom-scrollbar">
-                                        {scheme.product_ids?.map((pid, idx) => (
+                                        {scheme.applicable_products?.map((pid, idx) => (
                                             <span key={idx} className={`text-[10px] px-2 py-1 rounded ${showHistory ? 'bg-slate-200 text-slate-600' : 'bg-white/10'}`}>{pid}</span>
                                         ))}
                                     </div>
@@ -158,7 +165,8 @@ const Schemes = () => {
                                     <div className="flex items-center justify-between mb-3">
                                         <div className={`flex items-center gap-2 text-xs font-medium ${showHistory ? 'text-slate-400' : 'text-white/80'}`}>
                                             <Calendar size={14} />
-                                            <span>Valid until {scheme.validTo}</span>
+                                            {/* Extract date part just in case it has time */}
+                                            <span>Valid until {scheme.valid_to?.split('T')[0]}</span>
                                         </div>
                                     </div>
                                     <div className="bg-white/90 text-slate-800 rounded-xl p-3 flex items-center justify-between">
@@ -177,98 +185,147 @@ const Schemes = () => {
 
             {/* Add Scheme Modal */}
             {isModalOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 animate-fade-in-up overflow-visible">
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="text-lg font-bold text-slate-800">Add New Scheme</h3>
-                            <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-full text-slate-500">
-                                <X size={20} />
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg animate-fade-in-up flex flex-col max-h-[90vh]">
+
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                            <div>
+                                <h3 className="text-lg font-bold text-slate-800">Add New Scheme</h3>
+                                <p className="text-xs text-slate-400 mt-0.5">Configure discount details and applicable products</p>
+                            </div>
+                            <button onClick={() => setIsModalOpen(false)} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400 hover:text-slate-600 transition-colors">
+                                <X size={18} />
                             </button>
                         </div>
 
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            <div>
-                                <label className="text-sm font-medium text-slate-700 block mb-1">Scheme Name</label>
-                                <input
-                                    type="text"
-                                    className="glass-input w-full"
-                                    placeholder="e.g. Monsoon Sale"
-                                    value={formData.name}
-                                    onChange={e => setFormData({ ...formData, name: e.target.value })}
-                                    required
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-4">
+                        {/* Scrollable Body */}
+                        <div className="overflow-y-auto flex-1 custom-scrollbar">
+                            <form onSubmit={handleSubmit} className="p-6 space-y-5">
+
+                                {/* Scheme Name */}
                                 <div>
-                                    <label className="text-sm font-medium text-slate-700 block mb-1">Discount %</label>
+                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Scheme Name</label>
                                     <input
-                                        type="number"
+                                        type="text"
                                         className="glass-input w-full"
-                                        placeholder="10"
-                                        value={formData.discountPercent}
-                                        onChange={e => setFormData({ ...formData, discountPercent: e.target.value })}
+                                        placeholder="e.g. Monsoon Sale"
+                                        value={formData.name}
+                                        onChange={e => setFormData({ ...formData, name: e.target.value })}
                                         required
                                     />
                                 </div>
-                                <div>
-                                    <label className="text-sm font-medium text-slate-700 block mb-1">Valid To</label>
-                                    <input
-                                        type="date"
-                                        className="glass-input w-full"
-                                        value={formData.validTo}
-                                        onChange={e => setFormData({ ...formData, validTo: e.target.value })}
-                                        required
-                                    />
-                                </div>
-                            </div>
 
-                            {/* Multi-select Dropdown */}
-                            <div className="relative">
-                                <label className="text-sm font-medium text-slate-700 block mb-1">Select Products</label>
-                                <div
-                                    className="glass-input w-full min-h-[42px] flex flex-wrap gap-1 items-center cursor-pointer"
-                                    onClick={() => setIsProductDropdownOpen(!isProductDropdownOpen)}
-                                >
-                                    {selectedProductIds.length === 0 ? (
-                                        <span className="text-slate-400">Select products...</span>
-                                    ) : (
-                                        selectedProductIds.map(pid => (
-                                            <span key={pid} className="bg-red-50 text-red-600 px-2 py-0.5 rounded text-xs font-medium border border-red-100 flex items-center gap-1">
-                                                {pid}
-                                                <X size={12} className="cursor-pointer hover:text-red-800" onClick={(e) => { e.stopPropagation(); toggleProductSelection(pid); }} />
-                                            </span>
-                                        ))
-                                    )}
-                                </div>
-
-                                {isProductDropdownOpen && (
-                                    <div className="absolute top-full left-0 w-full mt-2 bg-white border border-slate-200 rounded-xl shadow-xl max-h-60 overflow-y-auto z-50 custom-scrollbar">
-                                        {products.map(p => (
-                                            <div
-                                                key={p.product_id}
-                                                className="px-4 py-2 hover:bg-slate-50 cursor-pointer flex items-center justify-between group transition-colors"
-                                                onClick={() => { toggleProductSelection(p.product_id); }}
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    <div className={`w-4 h-4 rounded border flex items-center justify-center transition-colors ${selectedProductIds.includes(p.product_id) ? 'bg-red-600 border-red-600' : 'border-slate-300'}`}>
-                                                        {selectedProductIds.includes(p.product_id) && <Check size={10} className="text-white" />}
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-sm font-medium text-slate-800">{p.name}</p>
-                                                        <p className="text-xs text-slate-500">{p.product_id}</p>
-                                                    </div>
-                                                </div>
-                                                <span className="text-xs font-bold text-slate-900">₹{p.price}</span>
-                                            </div>
-                                        ))}
+                                {/* Discount % + Valid To */}
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Discount %</label>
+                                        <input
+                                            type="number"
+                                            min="1" max="100"
+                                            className="glass-input w-full"
+                                            placeholder="10"
+                                            value={formData.discountPercent}
+                                            onChange={e => setFormData({ ...formData, discountPercent: e.target.value })}
+                                            required
+                                        />
                                     </div>
-                                )}
-                            </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Valid To</label>
+                                        <input
+                                            type="date"
+                                            className="glass-input w-full"
+                                            value={formData.validTo}
+                                            onChange={e => setFormData({ ...formData, validTo: e.target.value })}
+                                            required
+                                        />
+                                    </div>
+                                </div>
 
-                            <button type="submit" className="w-full py-3 bg-red-600 text-white font-bold rounded-xl shadow-lg hover:bg-red-700 transition-all mt-2">
-                                Create Scheme
-                            </button>
-                        </form>
+                                {/* Product Selection */}
+                                <div>
+                                    <div className="flex items-center justify-between mb-1.5">
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                            Applicable Products
+                                        </label>
+                                        <span className="text-xs text-slate-400">
+                                            {selectedProductIds.length === 0
+                                                ? 'All products (none selected)'
+                                                : `${selectedProductIds.length} selected`}
+                                        </span>
+                                    </div>
+
+                                    {/* Selected tags */}
+                                    {selectedProductIds.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 mb-2">
+                                            {selectedProductIds.map(pid => {
+                                                const p = products.find(pr => pr.product_id === pid);
+                                                return (
+                                                    <span key={pid} className="bg-rose-50 text-rose-700 border border-rose-200 px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                                                        {p?.name || pid}
+                                                        <button type="button" onClick={() => toggleProductSelection(pid)} className="hover:text-rose-900 transition-colors">
+                                                            <X size={11} />
+                                                        </button>
+                                                    </span>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+
+                                    {/* Search input */}
+                                    <div className="relative mb-2">
+                                        <svg className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8" /><path d="m21 21-4.35-4.35" /></svg>
+                                        <input
+                                            type="text"
+                                            placeholder="Search products..."
+                                            value={isProductDropdownOpen ? isProductDropdownOpen : ''}
+                                            onChange={e => setIsProductDropdownOpen(e.target.value)}
+                                            className="w-full pl-8 pr-4 py-2 text-sm border border-slate-200 rounded-xl bg-slate-50 focus:outline-none focus:ring-2 focus:ring-rose-300 focus:border-rose-300 placeholder:text-slate-400"
+                                        />
+                                    </div>
+
+                                    {/* Product list — inline, max height, no overflow */}
+                                    <div className="border border-slate-200 rounded-xl overflow-hidden max-h-48 overflow-y-auto custom-scrollbar">
+                                        {(() => {
+                                            const searchVal = typeof isProductDropdownOpen === 'string' ? isProductDropdownOpen.toLowerCase() : '';
+                                            const filtered = products.filter(p =>
+                                                p.name.toLowerCase().includes(searchVal) ||
+                                                p.product_id.toLowerCase().includes(searchVal)
+                                            );
+                                            if (filtered.length === 0) return (
+                                                <div className="py-8 text-center text-sm text-slate-400">No products found</div>
+                                            );
+                                            return filtered.map(p => (
+                                                <div
+                                                    key={p.product_id}
+                                                    className={`px-4 py-2.5 flex items-center justify-between cursor-pointer transition-colors border-b border-slate-100 last:border-0 ${selectedProductIds.includes(p.product_id) ? 'bg-rose-50' : 'hover:bg-slate-50'}`}
+                                                    onClick={() => toggleProductSelection(p.product_id)}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${selectedProductIds.includes(p.product_id) ? 'bg-rose-600 border-rose-600' : 'border-slate-300'}`}>
+                                                            {selectedProductIds.includes(p.product_id) && <Check size={10} className="text-white" />}
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-sm font-semibold text-slate-800 leading-tight">{p.name}</p>
+                                                            <p className="text-xs text-slate-400 font-mono">{p.product_id}</p>
+                                                        </div>
+                                                    </div>
+                                                    <span className="text-sm font-bold text-slate-700 flex-shrink-0 ml-2">₹{p.price}</span>
+                                                </div>
+                                            ));
+                                        })()}
+                                    </div>
+                                </div>
+
+                                {/* Submit */}
+                                <button
+                                    type="submit"
+                                    className="w-full py-3 bg-gradient-to-r from-red-600 to-rose-600 text-white font-bold rounded-xl shadow-lg shadow-red-500/20 hover:from-red-700 hover:to-rose-700 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Tag size={16} /> Create Scheme
+                                </button>
+                            </form>
+                        </div>
                     </div>
                 </div>
             )}

@@ -1,23 +1,30 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { User, Lock, ArrowRight } from 'lucide-react';
-
+import { useSearchParams } from "react-router";
 const Login = () => {
-    const [username, setUsername] = useState('user');
-    const [password, setPassword] = useState('user123'); // Pre-fill for convenience as requested
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
     const [error, setError] = useState('');
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const { login } = useAuth();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    console.log(searchParams.get("role"), "role")
 
-    const handleSubmit = (e) => {
+
+    const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
-        const success = login(username, password);
+        setIsSubmitting(true);
+        const success = await login(username, password);
+        setIsSubmitting(false);
+
         if (success) {
             navigate('/');
         } else {
-            setError('Invalid credentials');
+            setError('Invalid credentials. Please check your email/phone and password.');
         }
     };
 
@@ -38,7 +45,7 @@ const Login = () => {
 
                 <form onSubmit={handleSubmit} className="space-y-6">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700 ml-1">Username</label>
+                        <label className="text-sm font-medium text-slate-700 ml-1">Email Address / Phone Number</label>
                         <div className="relative group">
                             <User size={20} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-red-500 transition-colors" />
                             <input
@@ -46,7 +53,7 @@ const Login = () => {
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
                                 className="w-full bg-slate-50/50 border border-slate-200 rounded-xl py-3 pl-10 pr-4 focus:ring-2 focus:ring-red-500/20 focus:border-red-500 outline-none transition-all placeholder:text-slate-400"
-                                placeholder="Enter username"
+                                placeholder="Enter email or phone number"
                             />
                         </div>
                     </div>
@@ -73,28 +80,34 @@ const Login = () => {
 
                     <button
                         type="submit"
-                        className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white font-medium py-3 rounded-xl shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex items-center justify-center gap-2 group"
+                        disabled={isSubmitting}
+                        className="w-full bg-gradient-to-r from-red-600 to-rose-600 text-white font-medium py-3 rounded-xl shadow-lg shadow-red-500/30 hover:shadow-red-500/50 hover:scale-[1.02] active:scale-[0.98] transition-all duration-200 flex items-center justify-center gap-2 group disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100"
                     >
-                        <span>Sign In</span>
-                        <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                        <span>{isSubmitting ? 'Signing In...' : 'Sign In'}</span>
+                        {!isSubmitting && <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />}
                     </button>
                 </form>
 
                 <div className="mt-8 text-center text-xs text-slate-400 space-y-2">
                     <p
                         className="cursor-pointer hover:text-red-500 transition-colors inline-block px-2 py-1 rounded hover:bg-red-50"
-                        onClick={() => { setUsername('admin'); setPassword('admin123'); }}
+                        onClick={() => { setUsername('admin@gmail.com'); setPassword('admin123'); }}
                     >
-                        <strong>Admin:</strong> admin / admin123
+                        <strong>Admin:</strong> admin@gmail.com / admin123
                     </p>
                     <div className="w-full"></div>
                     <p
                         className="cursor-pointer hover:text-red-500 transition-colors inline-block px-2 py-1 rounded hover:bg-red-50"
-                        onClick={() => { setUsername('user'); setPassword('user123'); }}
+                        onClick={() => { setUsername('user@gmail.com'); setPassword('user123'); }}
                     >
-                        <strong>User:</strong> user / user123
+                        <strong>User:</strong> user@gmail.com / user123
                     </p>
                 </div>
+
+                <p className="text-center text-sm text-slate-500 mt-6">
+                    New here?{' '}
+                    <Link to="/signup" className="text-red-600 font-medium hover:underline">Create an Account</Link>
+                </p>
             </div>
         </div>
     );

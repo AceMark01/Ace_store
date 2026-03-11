@@ -1,75 +1,167 @@
-import React, { useState, useEffect } from 'react';
-import { LS, createComplaint, updateComplaintStatus } from '../utils/LSHelpers';
+import React, { useState, useEffect, useCallback } from 'react';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
-import { MessageSquare, Send, AlertCircle, CheckCircle, Clock, Check, RefreshCw } from 'lucide-react';
+import { MessageSquare, Send, AlertCircle, CheckCircle, Clock, Check, RefreshCw, Image as ImageIcon, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import SkeletonLoader from '../components/SkeletonLoader';
 
 const Complaints = () => {
     const { user } = useAuth();
     const [complaints, setComplaints] = useState([]);
     const [products, setProducts] = useState([]);
     const [showForm, setShowForm] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     // Form
     const [description, setDescription] = useState('');
     const [productId, setProductId] = useState('');
+    const [imageFile, setImageFile] = useState(null);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const navigate = useNavigate();
 
-    const loadData = () => {
+    const loadData = useCallback(async () => {
         if (!user) return;
-        const all = LS.get('ri_complaints');
-        const mine = user.role === 'admin' ? all : all.filter(c => c.customer_id === user.id);
-        setComplaints(mine.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)));
-        setProducts(LS.get('ri_products'));
-    };
+        setLoading(true);
+        try {
+            // Fetch products for the dropdown (only needed columns)
+            const { data: pData } = await supabase.from('products').select('product_id, name').order('name');
+            if (pData) setProducts(pData);
+
+            // Fetch complaints
+            let query = supabase.from('complaints').select('*').order('created_at', { ascending: false });
+            if (user.role !== 'admin') {
+                query = query.eq('customer_id', user.id);
+            }
+            const { data: cData, error } = await query;
+            if (!error && cData) {
+                const formatted = cData.map(c => ({
+                    ...c,
+                    history: Array.isArray(c.history) ? c.history : []
+                }));
+                setComplaints(formatted);
+            }
+        } catch (err) {
+            console.error("Error fetching complaints:", err);
+        } finally {
+            setLoading(false);
+        }
+    }, [user]);
 
     useEffect(() => {
         loadData();
-        window.addEventListener('ri_data_changed', loadData);
-        return () => window.removeEventListener('ri_data_changed', loadData);
-    }, [user]);
+    }, [loadData]);
 
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        if (!productId || !description) return;
-
-        const newComplaint = {
-            complaint_id: "C" + Date.now().toString().slice(-6),
-            customer_id: user.id,
-            product_id: productId,
-            description: description,
-            images: [],
-            status: "PENDING",
-            createdAt: new Date().toISOString(),
-            history: [{ status: "PENDING", at: new Date().toISOString() }]
-        };
-
-        createComplaint(newComplaint);
-        setDescription('');
-        setProductId('');
-        setShowForm(false);
+    const handleImageUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            if (file.size > 5 * 1024 * 1024) {
+                alert("Image must be less than 5MB");
+                return;
+            }
+            setImageFile(file);
+        }
     };
 
-    const handleStatusUpdate = (id, newStatus) => {
-        updateComplaintStatus(id, newStatus, { by: user.id, note: 'User updated status' });
-        // The event listener will reload data, but for better UX we could trigger loadData immediately if needed.
-        // The LSHelpers usually dispatches the event.
+    const uploadImage = async (file) => {
+        if (!file) return null;
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${Math.random()}.${fileExt}`;
+        const filePath = `${fileName}`;
+
+        const { error: uploadError } = await supabase.storage
+            .from('complaints_images')
+            .upload(filePath, file);
+
+        if (uploadError) {
+            console.error('Error uploading image:', uploadError);
+            throw uploadError;
+        }
+
+        const { data } = supabase.storage
+            .from('complaints_images')
+            .getPublicUrl(filePath);
+
+        return data.publicUrl;
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!productId || !description) return;
+        setIsSubmitting(true);
+
+        let uploadedImageUrl = null;
+        try {
+            if (imageFile) {
+                uploadedImageUrl = await uploadImage(imageFile);
+            }
+
+            const newComplaint = {
+                complaint_id: "C" + Date.now().toString().slice(-6),
+                customer_id: user.id,
+                product_id: productId,
+                description: description,
+                images: uploadedImageUrl ? [uploadedImageUrl] : [],
+                status: "PENDING",
+                created_at: new Date().toISOString(),
+                history: [{ status: "PENDING", at: new Date().toISOString(), by: user.id }]
+            };
+
+            const { error } = await supabase.from('complaints').insert([newComplaint]);
+
+            if (error) {
+                alert('Failed to submit complaint. Please try again.');
+                console.error(error);
+            } else {
+                setDescription('');
+                setProductId('');
+                setImageFile(null);
+                setShowForm(false);
+                loadData();
+            }
+        } catch (err) {
+            console.error(err);
+            alert("An error occurred during submission.");
+        } finally {
+            setIsSubmitting(false);
+        }
+    };
+
+    const handleStatusUpdate = async (id, newStatus) => {
+        const complaint = complaints.find(c => c.complaint_id === id);
+        if (!complaint) return;
+
+        const newHistory = [...complaint.history, { status: newStatus, at: new Date().toISOString(), by: user.id }];
+
+        const { error } = await supabase
+            .from('complaints')
+            .update({
+                status: newStatus,
+                history: newHistory
+            })
+            .eq('complaint_id', id);
+
+        if (error) {
+            console.error("Failed to update status", error);
+            alert("Failed to update status.");
+        } else {
+            loadData();
+        }
     };
 
     return (
         <div className="space-y-6 animate-fade-in-up">
             <div className="flex items-center justify-between">
-                <div>
-                    <h2 className="text-xl font-bold text-slate-800">Support & Complaints</h2>
-                    <p className="text-slate-500 text-sm">We're here to help you</p>
-                </div>
-                <button
-                    onClick={() => setShowForm(!showForm)}
-                    className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl shadow-lg shadow-red-500/30 hover:bg-red-700 transition-all font-medium"
-                >
-                    {showForm ? 'Cancel' : 'New Complaint'}
-                </button>
+                {user?.role !== 'admin' && (
+                    <button
+                        onClick={() => setShowForm(!showForm)}
+                        className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-xl shadow-lg shadow-red-500/30 hover:bg-red-700 transition-all font-medium"
+                    >
+                        {showForm ? 'Cancel' : 'New Complaint'}
+                    </button>
+                )}
             </div>
 
-            {showForm && (
+            {showForm && user?.role !== 'admin' && (
                 <div className="glass-panel p-6 animate-fade-in-down">
                     <h3 className="text-lg font-bold text-slate-800 mb-4">Submit a New Complaint</h3>
                     <form onSubmit={handleSubmit} className="space-y-4">
@@ -97,10 +189,42 @@ const Complaints = () => {
                                 required
                             />
                         </div>
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 mb-1">Attach Image (Optional)</label>
+                            <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-xl hover:border-red-400 transition-colors bg-white/50">
+                                <div className="space-y-2 text-center">
+                                    {imageFile ? (
+                                        <div className="flex flex-col items-center">
+                                            <div className="w-20 h-20 rounded-lg overflow-hidden border border-slate-200 mb-2">
+                                                <img src={URL.createObjectURL(imageFile)} alt="Preview" className="w-full h-full object-cover" />
+                                            </div>
+                                            <p className="text-sm text-slate-600 font-medium">{imageFile.name}</p>
+                                            <button type="button" onClick={() => setImageFile(null)} className="text-xs text-red-500 hover:text-red-700 mt-1">Remove</button>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <ImageIcon className="mx-auto h-12 w-12 text-slate-400" />
+                                            <div className="flex text-sm text-slate-600 justify-center">
+                                                <label className="relative cursor-pointer bg-white rounded-md font-medium text-red-600 hover:text-red-500 focus-within:outline-none">
+                                                    <span>Upload a file</span>
+                                                    <input type="file" className="sr-only" accept="image/*" onChange={handleImageUpload} />
+                                                </label>
+                                                <p className="pl-1">or drag and drop</p>
+                                            </div>
+                                            <p className="text-xs text-slate-500">PNG, JPG, GIF up to 5MB</p>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
                         <div className="flex justify-end">
-                            <button type="submit" className="flex items-center gap-2 px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors shadow-md">
+                            <button
+                                type="submit"
+                                disabled={isSubmitting}
+                                className="flex items-center gap-2 px-6 py-2 bg-red-600 text-white rounded-xl hover:bg-red-700 transition-colors shadow-md disabled:opacity-50"
+                            >
                                 <Send size={18} />
-                                <span>Submit Ticket</span>
+                                <span>{isSubmitting ? 'Submitting...' : 'Submit Ticket'}</span>
                             </button>
                         </div>
                     </form>
@@ -108,11 +232,19 @@ const Complaints = () => {
             )}
 
             <div className="space-y-4">
-                {complaints.length === 0 ? (
+                {loading ? (
+                    <SkeletonLoader type="table" count={3} />
+                ) : complaints.length === 0 ? (
                     <p className="text-slate-500 text-center py-10">No complaints found.</p>
                 ) : (
                     complaints.map(complaint => (
-                        <div key={complaint.complaint_id} className="glass-card p-6 border-l-4 border-l-transparent hover:border-l-red-500 transition-all">
+                        <div 
+                            key={complaint.complaint_id} 
+                            onClick={() => {
+                                if (user?.role === 'admin') navigate(`/complaints/${complaint.complaint_id}`);
+                            }}
+                            className={`glass-card p-6 border-l-4 border-l-transparent transition-all ${user?.role === 'admin' ? 'cursor-pointer hover:border-l-red-500 hover:shadow-md' : ''}`}
+                        >
                             <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                                 <div className="flex gap-4">
                                     <div className={`p-3 rounded-full h-fit flex-shrink-0 ${complaint.status === 'RESOLVED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
@@ -125,7 +257,7 @@ const Complaints = () => {
                                         </div>
                                         <p className="text-slate-600 mb-3">{complaint.description}</p>
                                         <div className="flex items-center gap-4 text-xs text-slate-400">
-                                            <span>Date: {new Date(complaint.createdAt).toLocaleDateString()}</span>
+                                            <span>Date: {new Date(complaint.created_at).toLocaleDateString()}</span>
                                             {complaint.history.length > 1 && (
                                                 <span className="flex items-center gap-1 text-slate-500">
                                                     <Clock size={12} /> Last Update: {new Date(complaint.history[complaint.history.length - 1].at).toLocaleString()}
@@ -142,24 +274,12 @@ const Complaints = () => {
                                         {complaint.status}
                                     </div>
 
-                                    <div className="flex gap-2 mt-2">
-                                        {complaint.status !== 'RESOLVED' && (
-                                            <button
-                                                onClick={() => handleStatusUpdate(complaint.complaint_id, 'RESOLVED')}
-                                                className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 text-emerald-600 border border-emerald-200 rounded-lg text-xs font-bold hover:bg-emerald-100 transition-colors"
-                                            >
-                                                <Check size={14} /> Mark Resolved
-                                            </button>
-                                        )}
-                                        {complaint.status === 'RESOLVED' && (
-                                            <button
-                                                onClick={() => handleStatusUpdate(complaint.complaint_id, 'PENDING')}
-                                                className="flex items-center gap-1 px-3 py-1.5 bg-slate-50 text-slate-500 border border-slate-200 rounded-lg text-xs font-bold hover:bg-slate-100 transition-colors"
-                                            >
-                                                <RefreshCw size={14} /> Re-open
-                                            </button>
-                                        )}
-                                    </div>
+                                    {user?.role === 'admin' && (
+                                        <div className="flex gap-2 mt-2">
+                                            {/* Status buttons removed from here; admins will manage status in details page */}
+                                            <span className="text-sm text-red-600 underline cursor-pointer font-medium mt-2">View Details</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -171,3 +291,4 @@ const Complaints = () => {
 };
 
 export default Complaints;
+

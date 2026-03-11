@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, ShoppingCart, ListOrdered, Tag, AlertCircle, Package2, LogOut, X, Star, ShieldCheck, HelpCircle } from 'lucide-react';
+import { LayoutDashboard, ShoppingCart, ListOrdered, Tag, AlertCircle, Package2, LogOut, X, Star, ShieldCheck, HelpCircle, Users } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
 const Sidebar = ({ isOpen, onClose }) => {
@@ -12,19 +12,19 @@ const Sidebar = ({ isOpen, onClose }) => {
 
     if (user?.role === 'admin') {
         navItems.push(
-            { icon: ShieldCheck, label: 'Admin Pending', path: '/admin/pending' },
+            { icon: ShieldCheck, label: 'Customer Orders', path: '/admin/pending' },
+            { icon: Users, label: 'Customer Details', path: '/admin/customers' },
             { icon: ListOrdered, label: 'All Orders', path: '/orders' },
-            { icon: ShoppingCart, label: 'Place Order', path: '/place-order' },
             { icon: Package2, label: 'All Products', path: '/all-products' },
+            { icon: Star, label: 'New Launches', path: '/new-products' },
             { icon: Tag, label: 'Schemes', path: '/schemes' },
             { icon: HelpCircle, label: 'Complaints', path: '/complaints' },
-            { icon: Star, label: 'New Launches', path: '/new-products' },
-            { icon: Package2, label: 'Not Tried', path: '/not-tried' }
         );
     } else {
         navItems.push(
             { icon: ShoppingCart, label: 'Place Order', path: '/place-order' },
             { icon: Package2, label: 'All Products', path: '/all-products' },
+            { icon: Package2, label: 'Not Tried', path: '/not-tried' },
             { icon: ListOrdered, label: 'My Orders', path: '/orders' },
             { icon: HelpCircle, label: 'Complaints', path: '/complaints' }
         );

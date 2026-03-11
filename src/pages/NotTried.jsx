@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LS, getNotTriedProducts } from '../utils/LSHelpers';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, ArrowRight } from 'lucide-react';
@@ -10,12 +10,19 @@ const NotTried = () => {
     const [products, setProducts] = useState([]);
 
     useEffect(() => {
-        if (user) {
-            // Need to handle if user.id is what the helper expects. 
-            // In LSHelpers/seedData, user.id is 'user' or 'admin'.
-            const notTried = getNotTriedProducts(user.id);
-            setProducts(notTried);
-        }
+        const fetchNotTried = async () => {
+            if (!user) return;
+
+            const { data: allProducts } = await supabase.from('products').select('*');
+            const { data: userOrders } = await supabase.from('orders').select('product_id').eq('customer_id', user.id);
+
+            if (allProducts && userOrders) {
+                const triedProductIds = new Set(userOrders.map(o => o.product_id));
+                const notTried = allProducts.filter(p => !triedProductIds.has(p.product_id));
+                setProducts(notTried);
+            }
+        };
+        fetchNotTried();
     }, [user]);
 
     const handleOrder = (productId) => {
@@ -24,12 +31,6 @@ const NotTried = () => {
 
     return (
         <div className="space-y-6 animate-fade-in-up">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h1 className="text-2xl font-bold text-slate-800">Products Not Tried Before</h1>
-                    <p className="text-slate-500 mt-1">Discover items you haven't purchased yet.</p>
-                </div>
-            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 {products.length === 0 ? (
@@ -38,27 +39,57 @@ const NotTried = () => {
                         <p className="text-sm text-slate-400">Amazing customer!</p>
                     </div>
                 ) : (
-                    products.slice(0, 50).map((product) => ( // Limit to 50 to avoid rendering too many
-                        <div key={product.product_id} className="group bg-white border border-slate-100 rounded-xl overflow-hidden hover:shadow-xl transition-all duration-300 flex flex-col">
-                            <div className="h-40 overflow-hidden relative bg-slate-50">
+                    products.slice(0, 50).map((product) => (
+                        <div
+                            key={product.product_id}
+                            className={`glass-card group overflow-hidden flex flex-col cursor-pointer transition-all ${user?.role === 'admin' ? 'hover:ring-2 hover:ring-red-500' : 'hover:shadow-lg hover:shadow-red-500/20 hover:-translate-y-1'}`}
+                            onClick={() => {
+                                if (user?.role === 'admin') navigate(`/purchase-history/${product.product_id}`);
+                                else handleOrder(product.product_id);
+                            }}
+                        >
+                            <div className="relative h-56 bg-gradient-to-br from-slate-100 to-slate-200 overflow-hidden shrink-0">
                                 <img
-                                    src={product.image}
+                                    src={product.image_url || product.image || 'https://placehold.co/400?text=Product'}
                                     alt={product.name}
-                                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500"
-                                    onError={(e) => { e.target.src = 'https://placehold.co/400?text=No+Image' }}
+                                    className={"w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"}
+                                    onError={(e) => { e.target.src = 'https://placehold.co/400?text=Product' }}
                                 />
+                                <div className="absolute bottom-3 left-3 bg-black/70 backdrop-blur-md text-white text-[10px] uppercase font-bold px-2.5 py-1 rounded shadow-sm">
+                                    {product.category}
+                                </div>
                             </div>
-                            <div className="p-4 flex-1 flex flex-col">
-                                <h4 className="font-semibold text-slate-800 mb-1 group-hover:text-indigo-600 transition-colors line-clamp-2">{product.name}</h4>
-                                <div className="mt-auto flex items-center justify-between pt-4 border-t border-slate-50">
-                                    <span className="font-bold text-lg text-slate-900">₹{product.price}</span>
-                                    <button
-                                        onClick={() => handleOrder(product.product_id)}
-                                        className="flex items-center gap-1 pl-3 pr-2 py-2 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-600 hover:text-white transition-all font-medium text-xs"
-                                    >
-                                        <span>Try This</span>
-                                        <ArrowRight size={14} />
-                                    </button>
+
+                            <div className="p-5 flex-1 flex flex-col pt-4">
+                                <h3 className="text-xl font-bold text-slate-800 mb-2 leading-tight line-clamp-1">{product.name}</h3>
+                                {user?.role === 'admin' ? (
+                                    <p className="text-xs text-slate-400 mb-4 font-mono">ID: {product.product_id}</p>
+                                ) : (
+                                    <div className="flex flex-wrap gap-2 mb-3">
+                                        <span className="text-[10px] font-bold px-2 py-0.5 border border-slate-300 rounded text-slate-600 uppercase tracking-widest">{product.category}</span>
+                                    </div>
+                                )}
+
+                                {user?.role !== 'admin' && (
+                                    <p className="text-sm text-slate-500 mb-4 line-clamp-3 leading-relaxed" title={product.description}>
+                                        {product.description || 'No additional details available.'}
+                                    </p>
+                                )}
+
+                                <div className="mt-auto flex items-end justify-between pt-1">
+                                    <div>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-0.5">Price</p>
+                                        <span className="text-xl font-black text-slate-900 tracking-tight">₹{product.price?.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleOrder(product.product_id); }}
+                                            className="px-5 py-2 bg-indigo-100 text-indigo-700 font-bold text-[13px] rounded-lg hover:bg-indigo-200 shadow-sm shadow-indigo-900/5 transition-all hover:-translate-y-0.5 flex items-center gap-1 whitespace-nowrap"
+                                        >
+                                            <span>Try This</span>
+                                            <ArrowRight size={14} />
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         </div>

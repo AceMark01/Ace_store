@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import Sidebar from './Sidebar';
-import { Menu, Bell, Search } from 'lucide-react';
+import { Menu, Bell } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 
@@ -10,15 +10,19 @@ const Layout = ({ children }) => {
     const { user } = useAuth();
 
     const getPageTitle = () => {
+        if (location.pathname.startsWith('/purchase-history')) return 'Purchase History';
+
         switch (location.pathname) {
             case '/': return 'Dashboard';
             case '/place-order': return 'Place New Order';
-            case '/orders': return 'Order History';
+            case '/orders': return user?.role === 'admin' ? 'All Orders' : 'My Orders';
             case '/schemes': return 'Active Schemes';
             case '/complaints': return 'Support & Complaints';
-            case '/new-products': return 'New Product Launches';
+            case '/new-products': return 'New Launches';
             case '/not-tried': return 'Products Not Tried';
-            case '/admin/pending': return 'Admin Console';
+            case '/all-products': return 'All Products';
+            case '/admin/customers': return 'Customer Details';
+            case '/admin/pending': return 'Customer Orders';
             default: return 'Rigga Industries';
         }
     };
@@ -40,14 +44,6 @@ const Layout = ({ children }) => {
                     </div>
 
                     <div className="flex items-center gap-3 md:gap-6">
-                        <div className="hidden md:flex items-center gap-2 px-4 py-2 bg-slate-100/50 rounded-full border border-slate-200/50 focus-within:bg-white focus-within:border-red-200 focus-within:ring-2 focus-within:ring-red-100 transition-all w-64">
-                            <Search size={18} className="text-slate-400" />
-                            <input
-                                type="text"
-                                placeholder="Search..."
-                                className="bg-transparent border-none outline-none text-sm w-full text-slate-600 placeholder:text-slate-400"
-                            />
-                        </div>
 
                         <button className="relative p-2.5 rounded-full hover:bg-white text-slate-400 hover:text-red-600 transition-all hover:shadow-lg hover:shadow-red-500/10">
                             <Bell size={22} />
