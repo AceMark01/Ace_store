@@ -88,21 +88,7 @@ const Login = () => {
                     </button>
                 </form>
 
-                <div className="mt-8 text-center text-xs text-slate-400 space-y-2">
-                    <p
-                        className="cursor-pointer hover:text-red-500 transition-colors inline-block px-2 py-1 rounded hover:bg-red-50"
-                        onClick={() => { setUsername('admin@gmail.com'); setPassword('admin123'); }}
-                    >
-                        <strong>Admin:</strong> admin@gmail.com / admin123
-                    </p>
-                    <div className="w-full"></div>
-                    <p
-                        className="cursor-pointer hover:text-red-500 transition-colors inline-block px-2 py-1 rounded hover:bg-red-50"
-                        onClick={() => { setUsername('user@gmail.com'); setPassword('user123'); }}
-                    >
-                        <strong>User:</strong> user@gmail.com / user123
-                    </p>
-                </div>
+
 
                 <p className="text-center text-sm text-slate-500 mt-6">
                     New here?{' '}
