@@ -27,3 +27,4 @@ dist-ssr
 WORKFLOW.md
 
 .env
+.env.local

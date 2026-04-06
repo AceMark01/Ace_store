@@ -26,7 +26,7 @@ const PurchaseHistory = () => {
         setLoading(true);
         try {
             // Load Product from API
-            const response = await fetch('http://eksai12.ddns.net:8786/ek_api/googleAutomation/PriceList.ashx');
+            const response = await fetch(import.meta.env.VITE_API_URL);
             const data = await response.json();
             let foundProduct = null;
             if (data.status === "200" && data.DataRec) {

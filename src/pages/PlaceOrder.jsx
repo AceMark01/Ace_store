@@ -37,7 +37,7 @@ const PlaceOrder = () => {
         country: 'India'
     });
 
-    const API_URL = 'http://eksai12.ddns.net:8786/ek_api/googleAutomation/PriceList.ashx';
+    const API_URL = import.meta.env.VITE_API_URL;
 
     useEffect(() => {
         if (location.state?.openCartTab) setActiveTab('cart');

@@ -35,7 +35,7 @@ const AllProducts = () => {
     const [visibleCount, setVisibleCount] = useState(12);
     const observerRef = useRef();
 
-    const API_URL = 'http://eksai12.ddns.net:8786/ek_api/googleAutomation/PriceList.ashx';
+    const API_URL = import.meta.env.VITE_API_URL;
 
     const getOverrides = () => JSON.parse(localStorage.getItem('productMediaOverrides') || '{}');
     const setOverrides = (newOverrides) => localStorage.setItem('productMediaOverrides', JSON.stringify(newOverrides));
