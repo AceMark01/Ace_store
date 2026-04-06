@@ -16,6 +16,8 @@ const Field = ({ icon: Icon, label, children }) => (
     </div>
 );
 
+import logo from '../assets/acelogo.png';
+
 const Signup = () => {
     const { signup } = useAuth();
     const navigate = useNavigate();
@@ -60,7 +62,6 @@ const Signup = () => {
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4 relative overflow-hidden">
-            {/* Background Decorative Elements */}
             <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
                 <div className="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-red-500/10 rounded-full blur-[100px]" />
                 <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] bg-pink-500/10 rounded-full blur-[80px]" />
@@ -68,9 +69,12 @@ const Signup = () => {
             </div>
 
             <div className="w-full max-w-lg bg-white/70 backdrop-blur-xl border border-white/50 shadow-2xl rounded-3xl p-8 md:p-10 relative z-10 animate-fade-in-up">
-                <div className="text-center mb-8">
-                    <h1 className="text-3xl font-bold bg-gradient-to-r from-red-600 to-rose-600 bg-clip-text text-transparent mb-2">Create Account</h1>
-                    <p className="text-slate-500 text-sm">Fill in the details below to get started.</p>
+                <div className="text-center mb-8 flex flex-col items-center">
+                    <div className="w-16 h-16 rounded-2xl bg-red-600 p-2 shadow-xl shadow-red-500/20 mb-4 ring-1 ring-white/20">
+                        <img src={logo} alt="Ace Store Logo" className="w-full h-full object-contain brightness-0 invert" />
+                    </div>
+                    <h1 className="text-3xl font-black tracking-tight text-slate-800 mb-1">Join Ace Store</h1>
+                    <p className="text-slate-500 font-medium">Create your premium customer account</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-4">

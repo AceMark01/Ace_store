@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { supabase } from '../supabaseClient';
+import { seedDummyData } from '../utils/dummyData';
 
 const AuthContext = createContext();
 
@@ -10,7 +10,8 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const storedUser = localStorage.getItem('currentUser');
+        seedDummyData();
+        const storedUser = localStorage.getItem('ace_store_user');
         if (storedUser) {
             setUser(JSON.parse(storedUser));
         }
@@ -18,118 +19,110 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const login = async (username, password) => {
-        // Custom Auth: Query the public.users table for the matching email or phone
-        const { data: userData } = await supabase
-            .from('users')
-            .select('*')
-            .or(`email.eq.${username},phone.eq.${username}`)
-            .maybeSingle();
-
-        // Check if user exists and password matches (temporarily plain text)
-        if (userData && userData.password_hash === password) {
-
-            // Fetch default address
-            const { data: addressData } = await supabase
-                .from('user_addresses')
-                .select('*')
-                .eq('user_id', userData.id)
-                .eq('is_default', true)
-                .single();
-
-            const userObj = {
-                id: userData.id,
-                name: userData.first_name,
-                email: userData.email,
-                role: userData.role,
-                phone: userData.phone,
-                avatar_url: userData.avatar_url,
-                deliveryAddress: addressData ? {
-                    state: addressData.state,
-                    district: addressData.address_line2,
-                    city: addressData.city,
-                    address: addressData.address_line1,
-                    postalCode: addressData.postal_code
-                } : null
+        // HARDCODED ADMIN CHECK
+        if (username === 'admin' && password === '123456') {
+            const adminObj = {
+                id: 'hardcoded-admin-id',
+                name: 'System Admin',
+                email: 'admin@acestore.com',
+                role: 'admin',
+                phone: '0000000000',
+                avatar_url: null
             };
-
-            setUser(userObj);
-            localStorage.setItem('currentUser', JSON.stringify(userObj));
+            setUser(adminObj);
+            localStorage.setItem('ace_store_user', JSON.stringify(adminObj));
             return true;
         }
 
+        // HARDCODED USER CHECK
+        if (username === 'user' && password === '123456') {
+            const userObj = {
+                id: 'hardcoded-user-id',
+                name: 'Test User',
+                email: 'user@acestore.com',
+                role: 'customer',
+                phone: '1234567890',
+                avatar_url: null
+            };
+            setUser(userObj);
+            localStorage.setItem('ace_store_user', JSON.stringify(userObj));
+            return true;
+        }
+
+        // Local Storage Auth (for signed up users)
+        const storedUsers = JSON.parse(localStorage.getItem('ace_store_users') || '[]');
+        const userData = storedUsers.find(u => u.email === username || u.phone === username);
+
+        if (userData && userData.password === password) {
+            const userObj = {
+                id: userData.id,
+                name: userData.name || userData.fullName,
+                email: userData.email,
+                role: userData.role || 'customer',
+                phone: userData.phone,
+                avatar_url: userData.avatar_url || null
+            };
+
+            setUser(userObj);
+            localStorage.setItem('ace_store_user', JSON.stringify(userObj));
+            return true;
+        }
 
         return false;
     };
 
-    const signup = async ({ fullName, email, password, phone, state, district, city, address, postalCode }, roleParam = 'customer') => {
-        // Custom Auth: Insert directly into public.users
-        const { data: userData, error: userError } = await supabase
-            .from('users')
-            .insert([
-                {
-                    email: email,
-                    first_name: fullName,
-                    phone: phone,
-                    password_hash: password, // Temporarily storing plain text as requested
-                    role: roleParam
-                }
-            ])
-            .select()
-            .single();
-
-        if (userError) {
-            return userError.message;
+    const signup = async (userData, roleParam = 'customer') => {
+        const storedUsers = JSON.parse(localStorage.getItem('ace_store_users') || '[]');
+        
+        if (storedUsers.find(u => u.email === userData.email)) {
+            return "Email already exists";
         }
 
-        const authUserId = userData.id;
-
-        // Insert the user's address into the user_addresses table
-        const { error: addressError } = await supabase.from('user_addresses').insert([
-            {
-                user_id: authUserId,
-                full_name: fullName,
-                phone: phone,
-                address_line1: address,
-                address_line2: district, // Using district as address_line2 optionally
-                city: city,
-                state: state,
-                postal_code: postalCode,
-                address_type: 'home',
-                is_default: true
-            }
-        ]);
-
-        if (addressError) {
-            return addressError.message;
-        }
+        const newUserId = Date.now().toString();
+        const newUser = { 
+            ...userData, 
+            id: newUserId, 
+            role: roleParam,
+            name: userData.fullName || userData.name
+        };
+        
+        storedUsers.push(newUser);
+        localStorage.setItem('ace_store_users', JSON.stringify(storedUsers));
 
         const userObj = {
-            id: authUserId,
-            name: fullName,
-            email: email,
+            id: newUserId,
+            name: newUser.name,
+            email: newUser.email,
             role: roleParam,
-            phone,
-            avatar_url: null,
-            deliveryAddress: { state, district, city, address, postalCode }
+            phone: newUser.phone,
+            avatar_url: null
         };
-
 
         // Auto-login
         setUser(userObj);
-        localStorage.setItem('currentUser', JSON.stringify(userObj));
+        localStorage.setItem('ace_store_user', JSON.stringify(userObj));
 
         return true;
     };
 
     const logout = () => {
         setUser(null);
-        localStorage.removeItem('currentUser');
+        localStorage.removeItem('ace_store_user');
     };
 
     const updateUser = (newData) => {
+        if (!user) return;
         const updatedUser = { ...user, ...newData };
         setUser(updatedUser);
-        localStorage.setItem('currentUser', JSON.stringify(updatedUser));
+        localStorage.setItem('ace_store_user', JSON.stringify(updatedUser));
+        
+        // Also update in registered users list
+        const storedUsers = JSON.parse(localStorage.getItem('ace_store_users') || '[]');
+        const idx = storedUsers.findIndex(u => u.id === user.id);
+        if (idx !== -1) {
+            storedUsers[idx] = { ...storedUsers[idx], ...newData };
+            localStorage.setItem('ace_store_users', JSON.stringify(storedUsers));
+        }
     };
 
     return (

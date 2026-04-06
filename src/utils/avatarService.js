@@ -1,28 +1,11 @@
-import { supabase } from "../supabaseClient";
-import { convertToWebp } from "./imageConvert";
-
 export const uploadAvatar = async (file, userId) => {
   try {
-    const webpFile = await convertToWebp(file);
-    const filePath = `${userId}/avatar_${Date.now()}.webp`; // Adding timestamp to avoid cache issues
-
-    const { error } = await supabase.storage
-      .from("avatars")
-      .upload(filePath, webpFile, {
-        upsert: true,
-        contentType: "image/webp"
-      });
-
-    if (error) {
-      console.error("Storage upload error:", error);
-      return null;
-    }
-
-    const { data } = supabase.storage
-      .from("avatars")
-      .getPublicUrl(filePath);
-
-    return data.publicUrl;
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   } catch (err) {
     console.error("Failed to upload avatar:", err);
     return null;
@@ -30,16 +13,24 @@ export const uploadAvatar = async (file, userId) => {
 };
 
 export const saveAvatarUrl = async (userId, url) => {
-  const { error } = await supabase
-    .from("users")
-    .update({
-      avatar_url: url
-    })
-    .eq("id", userId);
-
-  if (error) {
-    console.error("Database update error:", error);
+  try {
+    const users = JSON.parse(localStorage.getItem('ace_store_users') || '[]');
+    const userIndex = users.findIndex(u => u.id === userId);
+    if (userIndex !== -1) {
+      users[userIndex].avatar_url = url;
+      localStorage.setItem('ace_store_users', JSON.stringify(users));
+      
+      // Update current user in storage if it's the same
+      const currentUser = JSON.parse(localStorage.getItem('ace_store_user') || 'null');
+      if (currentUser && currentUser.id === userId) {
+        currentUser.avatar_url = url;
+        localStorage.setItem('ace_store_user', JSON.stringify(currentUser));
+      }
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.error("Database update error:", err);
     return false;
   }
-  return true;
 };

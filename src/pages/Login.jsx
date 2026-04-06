@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { User, Lock, ArrowRight } from 'lucide-react';
 import { useSearchParams } from "react-router";
+import logo from '../assets/acelogo.png';
+
 const Login = () => {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -11,8 +13,6 @@ const Login = () => {
     const { login } = useAuth();
     const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
-    console.log(searchParams.get("role"), "role")
-
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -30,7 +30,6 @@ const Login = () => {
 
     return (
         <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC] p-4 relative overflow-hidden">
-            {/* Background Decorative Elements */}
             <div className="absolute top-0 left-0 w-full h-full overflow-hidden z-0">
                 <div className="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] bg-red-500/10 rounded-full blur-[100px]" />
                 <div className="absolute top-[20%] right-[10%] w-[30%] h-[30%] bg-pink-500/10 rounded-full blur-[80px]" />
@@ -38,9 +37,12 @@ const Login = () => {
             </div>
 
             <div className="w-full max-w-md bg-white/70 backdrop-blur-xl border border-white/50 shadow-2xl rounded-3xl p-8 md:p-10 relative z-10 animate-fade-in-up">
-                <div className="text-center mb-10">
-                    <h1 className="text-3xl font-bold bg-gradient-to-r from-red-600 to-rose-600 bg-clip-text text-transparent mb-2">Rigga Industries</h1>
-                    <p className="text-slate-500">Welcome back! Please login to your account.</p>
+                <div className="text-center mb-10 flex flex-col items-center">
+                    <div className="w-20 h-20 rounded-2xl bg-red-600 p-3 shadow-xl shadow-red-500/20 mb-6 group hover:rotate-6 transition-transform duration-300 ring-1 ring-white/20">
+                        <img src={logo} alt="Ace Store Logo" className="w-full h-full object-contain brightness-0 invert" />
+                    </div>
+                    <h1 className="text-3xl font-black tracking-tight text-slate-800 mb-2">Ace Store</h1>
+                    <p className="text-slate-500 font-medium">Welcome back! Sign in to continue</p>
                 </div>
 
                 <form onSubmit={handleSubmit} className="space-y-6">
